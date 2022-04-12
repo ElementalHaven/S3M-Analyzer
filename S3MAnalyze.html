@@ -1,0 +1,801 @@
+<html>
+	<head>
+		<meta content="text/html; charset=US-ASCII" http-equiv="Content-Type">
+		<title>S3M Analyzer</title>
+		<script>
+			/** @type {DataView} */
+			var file;
+			/** @type {string} */
+			var filename;
+
+			var orders;
+			var samples;
+			var patterns;
+			var patternInfo;
+			var flags;
+			var trackerVer;
+			var signed;
+			var volGlobal;
+			var volMaster;
+			var initialSpeed;
+			var initialTempo;
+			var ultraClickRemoval;
+			var defaultPan;
+			var special;
+			var channelMap = new Array(32);
+
+			//#region #Helper Methods
+
+			/** @param {string} id */
+			function $(id) {
+				return document.getElementById(id);
+			}
+
+			/** @param {string} tagName */
+			function nt(tagName) {
+				return document.createElement(tagName);
+			}
+
+			/**
+			 * @param {Element} tag
+			 * @param {number} val
+			 * @param {number} unusedVal
+			 */
+			function setUnused(tag, val, unusedVal) {
+				if(val == unusedVal) tag.classList.add("unused");
+				else tag.classList.remove("unused");
+			}
+
+			function setValueWithColoring(tagname, val, good, warn) {
+				let tag = $(tagname);
+				tag.removeAttribute("class");
+				tag.innerText = val;
+				if(val == warn) tag.classList.add("warn");
+				else if(val != good) tag.classList.add("bad");
+			}
+
+			function toHexWithLen(val, len) {
+				let txt = val.toString(16).toUpperCase();
+				while(txt.length < len) txt = "0" + txt;
+				return "0x" + txt;
+			}
+
+			function parapointerString(val) {
+				return '@' + toHexWithLen(val << 4, 5);
+			}
+
+			function tvdVer(dot) {
+				let txt = ((trackerVer >> 8) & 15).toString(16);
+				if(dot) txt += '.';
+				txt += ((trackerVer >> 4) & 15).toString(16);
+				return txt + (trackerVer & 15).toString(16);
+			}
+
+			function tvdNoHex() {
+				if(trackerVer == 0xCA00) return "Camoto/libgamemusic";
+				let program = trackerVer >> 12;
+				switch(program) {
+					case 1:
+						return "ScreamTracker " + tvdVer(true);
+					case 2:
+						return "Imago Orpheus " + tvdVer(true);
+					case 3:
+						return "Impulse Tracker " + tvdVer(true);
+					case 4:
+						return "Schism Tracker " + tvdVer(false);
+					case 5:
+						return "OpenMPT " + tvdVer(true);
+					case 6:
+						return "BeRoTracker " + tvdVer(true);
+					case 7: // ffs intellisense. I do not want to autocomplete when typing : in a switch statement
+						return "CreamTracker " + tvdVer(true);
+					default:
+						return "Unknown";
+				}
+			}
+
+			function trackerVersionDescription() {
+				return tvdNoHex() + " (" + toHexWithLen(trackerVer) + ')';
+			}
+
+			if(Element.prototype["append"] == undefined) { // polyfill
+				Element.prototype.append = function(nodes) {
+					if(Array.isArray(nodes)) {
+						for(let node in nodes) appendChild(node);
+					} else {
+						this.appendChild(nodes);
+					}
+				}
+			}
+
+			String.prototype.contains = function(str) {
+				return this.indexOf(str) != -1;
+			}
+
+			/**
+			 * @param {number} off - The offset into the file to read from
+			 * @param {number} len - The maximum length of the string
+			 */
+			function readString(off, len) {
+				let str = "";
+				for(let i = 0; i < len; ++i) {
+					let c = file.getUint8(off + i);
+					if(!c) break;
+					str += String.fromCharCode(c);
+				}
+				return str;
+			}
+
+			function getTypeString(type) {
+				if(type == 0) return "Message";
+				if(type == 1) return "PCM";
+				if(type < 8) return "Adlib";
+				return "Unknown";
+			}
+
+			//#endregion
+
+			function parseS3M() {
+				let title = readString(0, 0x1C).trim();
+				$("h_title").innerText = title;
+				if(title.length == 0) {
+					$("title").innerText = filename;
+					console.log(filename);
+				} else {
+					let qc = '"';
+					if(title.contains(qc)) {
+						qc = (title.startsWith(qc) && title.endsWith(qc)) ? '' : "'";
+					}
+					let desc = qc + title + qc + " (" + filename + ')';
+					$("title").innerText = desc;
+					console.log(desc);
+				}
+				setValueWithColoring("h_sig1", toHexWithLen(file.getUint8(0x1C), 2), "0x1A");
+				setValueWithColoring("h_type", toHexWithLen(file.getUint8(0x1D), 2), "0x10");
+				orders = new Array(file.getUint16(0x20, true));
+				$("h_orders").innerText = orders.length;
+				samples = new Array(file.getUint16(0x22, true));
+				$("h_samples").innerText = samples.length;
+				patterns = new Array(file.getUint16(0x24, true));
+				patternInfo = new Array(patterns.length);
+				$("h_patterns").innerText = patterns.length;
+				flags = file.getUint16(0x26, true);
+				$("h_flags").innerText = toHexWithLen(flags, 4);
+				setUnused($("h_flags"), flags, 0);
+				trackerVer = file.getUint16(0x28, true);
+				$("h_ver").innerText = trackerVersionDescription();
+				let sampType = file.getUint16(0x2A, true);
+				if(sampType == 0 || sampType > 2) {
+					signed = false;
+					sampType = toHexWithLen(sampType, 4);
+				} else {
+					signed = sampType == 1;
+					sampType = signed ? "Signed" : "Unsigned";
+				}
+				setValueWithColoring("h_sign", sampType, "Unsigned", "Signed");
+				setValueWithColoring("h_sig2", readString(0x2C, 4), "SCRM", "12345");
+				volGlobal = file.getUint8(0x30);
+				$("h_gvol").innerText = volGlobal;
+				initialSpeed = file.getUint8(0x31);
+				$("h_speed").innerText = initialSpeed;
+				initialTempo = file.getUint8(0x32);
+				$("h_tempo").innerText = initialTempo;
+				$("h_rowms").innerText = 1000 * initialSpeed / initialTempo + " ms";
+				volMaster = file.getUint8(0x33);
+				$("h_mvol").innerText = (volMaster >> 7 ? "Stereo, " : "Mono, ") + (volMaster & 0x7F) + " (" + toHexWithLen(volMaster, 2) + ')';
+				ultraClickRemoval = file.getUint8(0x34);
+				$("h_click").innerText = ultraClickRemoval + " Channel" + (ultraClickRemoval == 1 ? "" : 's');
+				defaultPan = file.getUint8(0x35);
+				$("h_pan").innerText = defaultPan == 252 ? "Values in header (252)" : defaultPan;
+				special = file.getUint16(0x3E);
+				$("h_extra").innerText = flags & 0x80 ? parapointerString(special) : "Unused (" + toHexWithLen(special, 4) + ')';
+				setUnused($("h_extra"), flags >> 7, 0);
+
+				for(let i = 0; i < 32; ++i) {
+					let chan = file.getUint8(0x40 + i);
+					let tag = $("chan" + i);
+					tag.innerText = chan;
+					setUnused(tag, chan, 255);
+				}
+
+				let o = $("orders");
+				while(o.hasChildNodes()) o.removeChild(o.lastChild);
+				for(let i = 0;;) {
+					orders[i] = file.getUint8(0x60 + i);
+					let tag = nt("span");
+					tag.innerText = orders[i];
+					if(orders[i] == 255) tag.classList.add("unused");
+					else tag.addEventListener("click", showPattern);
+					o.append(tag);
+					if(++i < orders.length) o.append(document.createTextNode(", "));
+					else break;
+				}
+
+				let off = 0x60 + orders.length;
+				console.log("List of " + samples.length + " instrument pointers starting at " + toHexWithLen(off, 4));
+				let s = $("samples");
+				while(s.hasChildNodes()) s.removeChild(s.lastChild);
+				for(let i = 0;;) {
+					samples[i] = readSampleInfo(file.getUint16(off, true) << 4);
+					off += 2;
+					let tag = nt("span");
+					tag.innerText = i;
+					tag.addEventListener("click", showInstrument);
+					s.append(tag);
+					if(++i < samples.length) s.append(document.createTextNode(", "));
+					else break;
+				}
+
+				console.log("List of " + patterns.length + " pattern pointers starting at " + toHexWithLen(off, 4));
+				let p = $("patterns");
+				while(p.hasChildNodes()) p.removeChild(p.lastChild);
+				for(let i = 0;;) {
+					let ptr = file.getUint16(off, true) << 4;
+					patterns[i] = readPattern(i, ptr);
+					off += 2;
+					let tag = nt("span");
+					tag.innerText = i;
+					setUnused(tag, ptr, 0);
+					tag.addEventListener("click", showPattern);
+					p.append(tag);
+					if(++i < patterns.length) p.append(document.createTextNode(", "));
+					else break;
+				}
+			}
+
+			function readSampleInfo(offset) {
+				let info = {
+					type: file.getUint8(offset),
+					name: readString(offset + 1, 12),
+					ptr: 0,
+					len: 0,
+					data: null,
+					loopStart: 0,
+					loopEnd: 0,
+					defaultVol: 63,
+					packing: 0,
+					flags: 0,
+					sampleRate: 44100,
+					title: null,
+					sig: null,
+					loop: false,
+					stereo: false,
+					le16: false
+				};
+				if(info.type > 1) {
+					console.log("None PCM instrument: " + info.type);
+				} else { // PCM
+					info.ptr = (file.getUint8(offset + 13) << 20) | (file.getUint16(offset + 14, true) << 4);
+					info.len = file.getUint32(offset + 16, true) & 0xFFFF;
+					info.loopStart = file.getUint32(offset + 20, true);
+					info.loopEnd = file.getUint32(offset + 24, true);
+					info.defaultVol = file.getUint8(offset + 28);
+					info.reserved = file.getUint8(offset + 29);
+					info.packing = file.getUint8(offset + 30);
+					info.flags = file.getUint8(offset + 31);
+					if(info.type == 1) {
+						info.loop = (info.flags & 1) != 0;
+						info.stereo = (info.flags & 2) != 0;
+						info.le16 = (info.flags & 4) != 0;
+						if(info.stereo) info.len *= 2; // stereo
+						if(info.ptr + info.len > file.byteLength) {
+							console.log("Sample data could not fit at its position: " + toHexWithLen(info.ptr, 8) + " with " + info.len + " bytes");
+						} else {
+							info.data = new DataView(file.buffer, info.ptr, info.len);
+						}
+					}
+					info.sampleRate = file.getUint32(offset + 32, true);
+					info.title = readString(offset + 48, 28);
+					info.sig = readString(offset + 76, 4);
+				}
+				return info;
+			}
+
+			/**
+			 * @param {number} idx
+			 * @param {number} off
+			 */
+			function readPattern(idx, off) {
+				if(off == 0) {
+					//console.log("Pattern[" + idx + "] at 0. likely indicating null for some weird reason");
+					return null;
+				}
+				let baseOff = off;
+				let len = file.getUint16(off, true);
+				patternInfo[idx] = { offset: off, length: len };
+				if(len < 3) {
+					if(len == 2) console.log("Pattern[" + idx + "] at " + toHexWithLen(baseOff, 4) + " was empty");
+					else console.log("Pattern[" + idx + "] at " + toHexWithLen(baseOff, 4) + " didn't even have enough bytes for its own length field");
+					return null;
+				}
+				off += 2;
+				let pattern = [];
+				for(let r = 0; r < 64; ++r) {
+					let row = [];
+					pattern[r] = row;
+
+					let what;
+					while(true) {
+						what = file.getUint8(off++);
+						if(!(what & 0xE0)) break;
+						let data = {
+							what: what,
+							channel: what & 0x1F
+						}
+						if(what & 0x20) {
+							data.note = file.getUint8(off++);
+							data.instr = file.getUint8(off++);
+						}
+						if(what & 0x40) data.vol = file.getUint8(off++);
+						if(what & 0x80) {
+							data.command = file.getUint8(off++);
+							data.param = file.getUint8(off++);
+						}
+						row.push(data);
+					}
+				}
+				if(baseOff + len != off) {
+					console.log("Mismatch in data length of pattern[" + idx + "]: Expected " + len + " bytes at " + toHexWithLen(baseOff, 4) + " but read " + (off - baseOff) + '.');
+				}
+				return pattern;
+			}
+
+			function showInstrument() {
+				if(mtimer) {
+					clearInterval(mtimer);
+					mtimer = 0;
+				}
+				let sampleId = parseInt(this.innerText);
+				let old = document.querySelector("#samples .sel");
+				if(old) old.classList.remove("sel");
+				this.classList.add("sel");
+
+				let instr = samples[sampleId];
+				let tag = $("i_type");
+				tag.removeAttribute("class");
+				tag.innerText = getTypeString(instr.type) + " (" + instr.type + ")";
+				if(tag.innerText.startsWith("Adlib")) tag.classList.add("warn");
+				else if(tag.innerText.startsWith("Unknown")) tag.classList.add("bad");
+				$("i_name").innerText = instr.name;
+				$("i_title").innerText = instr.title;
+				$("i_ptr").innerText = toHexWithLen(instr.ptr, 8);
+				
+				let okSig;
+				if(instr.type == 1) {
+					document.body.classList.remove("nosamples");
+
+					let bps = instr.le16 ? 2 : 1;
+					let numChans = instr.stereo ? 2 : 1;
+					var len = instr.len / numChans;
+					tag = $("i_len");
+					tag.innerText = len + " bytes";
+					tag.removeAttribute("class");
+					if(len % bps != 0) tag.classList.add("warn");
+					$("i_loopa").innerText = instr.loopStart + " bytes";
+					$("i_loopb").innerText = instr.loopEnd + " bytes";
+					$("i_vol").innerText = instr.defaultVol;
+					setValueWithColoring("i_pad", toHexWithLen(instr.reserved, 2), "0x00");
+					setValueWithColoring("i_pack", instr.packing == 1 ? "DP30ADPCM (1)" : instr.packing, 0, "DP30ADPCM (1)");
+					$("i_flags").innerText = toHexWithLen(instr.flags, 2);
+					$("i_loop").innerText = instr.loop;
+					$("i_stereo").innerText = instr.stereo;
+					$("i_16le").innerText = instr.le16;
+					$("i_rate").innerText = instr.sampleRate;
+					okSig = "SCRS";
+					$("playptr").style.left = "0px";
+
+					/** @type {DataView} */
+					let sample = instr.data;
+					if(instr.data == null) {
+						$("waveform").width = 0;
+						return;
+					}
+					
+					let hd = new ArrayBuffer(44 + instr.len);
+					let header = new DataView(hd);
+					header.setUint32(0, 0x52494646); // "RIFF"
+					header.setUint32(4, 36 + instr.len, true);
+					header.setUint32(8, 0x57415645); // "WAVE"
+					header.setUint32(12, 0x666D7420); // "fmt "
+					header.setUint32(16, 16, true);
+					header.setUint16(20, 1, true); 
+					header.setUint16(22, numChans, true);
+					header.setUint32(24, instr.sampleRate / bps, true);
+					header.setUint32(28, instr.sampleRate * numChans, true);
+					header.setUint16(32, numChans * bps, true);
+					header.setUint16(34, bps * 8, true);
+					header.setUint32(36, 0x64617461); // "data"
+					header.setUint32(40, instr.len, true);
+
+					let canvas = $("waveform");
+					canvas.width = instr.len / (bps * 8);
+					/** @type {CanvasRenderingContext2D} */
+					let g = canvas.getContext("2d");
+					g.beginPath();
+					g.strokeStyle = "#3333FF";
+					if(instr.le16) {
+						for(let i = 0; i + 1 < sample.byteLength; i += 2) {
+							let s = signed ? sample.getInt16(i) : sample.getUint16(i, true);
+							if(signed) s += 32768;
+							header.setInt16(44 + i, s - 32768, true);
+
+							s = 64 - (s / 1024);
+							if(i == 0) g.moveTo(0, s);
+							else g.lineTo(i / 8, s);
+						}
+					} else {
+						for(let i = 0; i < sample.byteLength; ++i) {
+							let s = signed ? sample.getInt8(i) : sample.getUint8(i);
+							if(signed) s += 128;
+							header.setUint8(44 + i, s);
+
+							s = 64 - (s / 4);
+							if(i == 0) g.moveTo(0, s);
+							else g.lineTo(i / 8, s);
+						}
+					}
+					g.stroke();
+					
+					let blob = new Blob([hd], { type: "audio/wav" });
+					$("i_play").src = window.URL.createObjectURL(blob);
+				} else {
+					document.body.classList.add("nosamples");
+
+					tag = $("i_len");
+					tag.innerText = "";
+					tag.removeAttribute("class");
+					$("i_loopa").innerText = "";
+					$("i_loopb").innerText = "";
+					$("i_vol").innerText = "";
+					setValueWithColoring("i_pad", "", "");
+					setValueWithColoring("i_pack", "", "");
+					$("i_flags").innerText = "";
+					$("i_loop").innerText = "";
+					$("i_stereo").innerText = "";
+					$("i_16le").innerText = "";
+					$("i_rate").innerText = "";
+					okSig = "";
+				}
+				setValueWithColoring("i_sig", instr.sig, okSig);
+			}
+
+			/**
+			 * @param {string} cmd
+			 */
+			function getCommandName(cmd, subcmd) {
+				// https://wiki.openmpt.org/Manual:_Effect_Reference#S3M_Effect_Commands
+				switch(cmd) {
+					case 0x01:
+						return "Set Speed";
+					case 0x02:
+						return "GOTO Order";
+					case 0x03:
+						return "Next Order w/ Row";
+					case 0x04:
+						return "Volume Slide";
+					case 0x05:
+						return "Portamento Down";
+					case 0x06:
+						return "Portamento Up";
+					case 0x07:
+						return "Tone Portamento";
+					case 0x08:
+						return "Vibrato";
+					case 0x0F:
+						return "Sample Offset";
+					case 0x13:
+						switch(subcmd) {
+							case 0x0:
+								return "Set Filter";
+							case 0x8:
+								return "Set Pan";
+						}
+					case 0x14:
+						switch(subcmd) {
+							case 0x0:
+								return "Decrease Tempo";
+							case 0x1:
+								return "Increase Tempo";
+							default:
+								return "Set Tempo";
+						}
+					default:
+						return "Unknown";
+				}
+			}
+
+			function showPattern() {
+				let patternId = this ? parseInt(this.innerText) : 255;
+				console.log("Attempting to show pattern " + patternId);
+				let pattern = patternId >= patterns.length ? null : patterns[patternId];
+				let pInfo = patternId >= patterns.length ? null : patternInfo[patternId];
+				if(pInfo) {
+					$("rows_extra").innerText = "(offset=" + pInfo.offset + ", length=" + pInfo.length + ")";
+				}
+				if(pattern) {
+					for(let i = 0; i < 64; ++i) {
+						let txt = "";
+						let row = pattern[i];
+						for(let j = 0; j < row.length; ++j) {
+							let info = row[j];
+							if(!info) {
+								console.log("pattern " + patternId + ", row " + i + ", info " + j + " is null");
+								continue;
+							}
+							txt += "Channel " + info.channel + ":<br>";
+							if(info.what & 0x20) {
+								txt += "&nbsp;- Note: " + info.note + "<br>";
+								txt += "&nbsp;- Instrument " + info.instr + "<br>";
+							}
+							if(info.what & 0x40) txt += "&nbsp;- Volume: " + info.vol + "<br>";
+							if(info.what & 0x80) {
+								txt += "&nbsp;- Command: " + getCommandName(info.command, info.param >> 4) + " (" + toHexWithLen(info.command, 2) + ")<br>";
+								txt += "&nbsp;- Parameter: " + toHexWithLen(info.param, 2) + "<br>";
+							}
+						}
+						if(txt.length > 0) txt = txt.substring(0, txt.length - 4);
+						$("row" + i).innerHTML = txt;
+					}
+				} else {
+					for(let i = 0; i < 64; ++i) {
+						$("row" + i).innerHTML = "";
+					}
+				}
+			}
+
+			var mtimer;
+
+			function playSample() {
+				/** @type {HTMLMediaElement} */
+				let au = $("i_play");
+				if(au.paused) {
+					if(!mtimer) mtimer = setInterval(adjustMarkerToPlayback, 16);
+					au.play();
+				} else {
+					if(mtimer) {
+						clearInterval(mtimer);
+						mtimer = 0;
+					}
+					au.pause();
+				}
+			}
+
+			function adjustMarkerToPlayback() {
+				let len = $("waveform").width;
+				/** @type {HTMLMediaElement} */
+				let au = $("i_play");
+				let m = $("playptr");
+				m.style.left = (au.currentTime * len / au.duration) + "px";
+				if(au.ended && mtimer) {
+					clearInterval(mtimer);
+					mtimer = 0;
+				}
+			}
+
+			function makePlayable() {
+				let player = $("playback").firstChild;
+				$("playback").style.display = "inherit";
+			}
+
+			/** @param {DragEvent} e */
+			function handleDrop(e) {
+				e.preventDefault();
+				let files = e.dataTransfer.files;
+				if(files.length > 0 && files[0].name.toUpperCase().endsWith(".S3M")) {
+					console.log("S3M file dropped");
+					let reader = new FileReader();
+					reader.onload = function(e) {
+						if(reader.readyState == FileReader.DONE) {
+							file = new DataView(reader.result);
+							//makePlayable();
+							parseS3M();
+						}
+					}
+					filename = files[0].name;
+					reader.readAsArrayBuffer(files[0]);
+				}
+			}
+
+			function makeChanMapTable() {
+				let t = $("chanmap");
+				let header, body;
+				for(let i = 0; i < 32; ++i) {
+					if(i % 16 == 0) {
+						
+						if(i == 16) t.append(nt("tr"));
+						header = nt("thead");
+						body = nt("tr");
+						t.append(header);
+						t.append(body);
+					}
+					let tag = nt("th");
+					tag.innerText = i;
+					header.append(tag);
+					tag = nt("td");
+					tag.id = "chan" + i;
+					body.append(tag);
+				}
+			}
+
+			function makeRowsTable() {
+				let table = $("rows");
+				let header = nt("thead");
+				header.append(nt("th"));
+				table.append(header);
+				for(let i = 0; i < 8; ++i) {
+					let tag = nt("th");
+					tag.innerText = "00" + i.toString();
+					header.append(tag);
+
+					let row = nt("tr");
+					tag = nt("th");
+					tag.innerText = "0" + i.toString() + "0";
+					row.append(tag);
+					for(let j = 0; j < 8; ++j) {
+						tag = nt("td");
+						tag.id = "row" + (i * 8 + j);
+						row.append(tag);
+					}
+					table.append(row);
+				}
+
+			}
+		</script>
+		<style>
+			body {
+				font-family: "Calibri";
+			}
+			h1 {
+				text-align: center;
+			}
+			table {
+				border-collapse: collapse;
+				margin-left: 16px;
+			}
+			th, td {
+				border: 1px solid gray;
+				padding: 2px 4px;
+				min-width: 32px;
+				min-height: 18px;
+			}
+			th {
+				font-weight: normal;
+				background-color: #CCC;
+			}
+			.good {
+				background-color: lightgreen;
+			}
+			.bad {
+				background-color: lightcoral;
+			}
+			.warn {
+				background-color: khaki;
+			}
+			.unused {
+				color: #CCC;
+			}
+			#header td:not(:nth-child(3)) {
+				min-width: 192px;
+			}
+			#header td:nth-child(3), #instrument td:nth-child(3) {
+				border: none;
+			}
+			#instrument td:not(:nth-child(3)) {
+				min-width: 128px;
+			}
+			#chanmap tr:nth-child(3) {
+				height: 24px;
+			}
+			#chanmap td {
+				text-align: center;
+				height: 24px;
+			}
+			#playback {
+				display: none;
+				text-align: center;
+			}
+			#waveform {
+				border: 1px solid gray;
+				margin: 0px 16px;
+				padding: 1px;
+				cursor: pointer;
+				display: block;
+			}
+			#playptr {
+				position: relative;
+				width: 1px;
+				height: 64px;
+				background-color: red;
+				top: -66px;
+				margin-left: 18px;
+				z-index: 5;
+				display: inline-block;
+				margin-bottom: -64px;
+			}
+			#rows td {
+				vertical-align: top;
+				min-width: 128px;
+			}
+			.sel {
+				font-weight: bold;
+			}
+			#orders span, #samples span, #patterns span {
+				cursor: pointer;
+			}
+			body.dark-theme {
+				background-color: black;
+				color: white;
+			}
+			.dark-theme th {
+				background-color: #666;
+			}
+			.dark-theme a {
+				color: #66C;
+			}
+			.dark-theme .unused {
+				color: #666;
+			}
+			.dark-theme .good {
+				background-color: darkgreen;
+			}
+			.dark-theme .bad {
+				background-color: darkred;
+			}
+			.dark-theme .warn {
+				background-color: darkgoldenrod;
+			}
+			.nosamples #waveform, .nosamples #i_play, .nosamples #playptr {
+				display: none;
+			}
+		</style>
+	</head>
+	<body class="nosamples">
+		<h1 id="title">Drop an S3M file here to analyze it</h1>
+		<span id="playback"><audio controls></audio><br></span>
+		Header:
+		<table id="header">
+			<tr><th>Title</th><td id="h_title"></td><td></td><th>Signature #2</th><td id="h_sig2" title='Should be "SCRM"'></td></tr>
+			<tr><th>Signature #1</th><td id="h_sig1" title='Should be 0x1A'></td><td></td><th>Global Volume</th><td id="h_gvol"></td></tr>
+			<tr><th>Type</th><td id="h_type" title='Should be 0x10'></td><td></td><th>Initial Speed(Frames per row)</th><td id="h_speed"></td></tr>
+			<tr><th>Order Count</th><td id="h_orders"></td><td></td><th>Initial Tempo(Frames per second)</th><td id="h_tempo"></td></tr>
+			<tr><th>Instrument/Sample Count</th><td id="h_samples"></td><td></td><th>Milliseconds per row(computed)</th><td id="h_rowms"></td></tr>
+			<tr><th>Pattern Count</th><td id="h_patterns"></td><td></td><th>Master Volume</th><td id="h_mvol"></td></tr>
+			<tr><th>Flags</th><td id="h_flags"></td><td></td><th>Ultra Click Removal</th><td id="h_click"></td></tr>
+			<tr><th>Tracker Version</th><td id="h_ver"></td><td></td><th>Default Pan</th><td id="h_pan"></td></tr>
+			<tr><th>Signed Samples</th><td id="h_sign" title='Signed samples are deprecated'></td><td></td><th>Additional Data Pointer</th><td id="h_extra"></td></tr>
+		</table><br>
+		Channel Map:
+		<table id="chanmap"></table><br>
+		Pattern Order:
+		<div id="orders"></div><br>
+		Instruments/Samples:
+		<div id="samples"></div><br>
+		Patterns:
+		<div id="patterns"></div><br>
+		Instrument:<br>
+		<table id="instrument">
+			<tr><th>Type</th><td id="i_type"></td><td></td><th>Packing</th><td id="i_pack" title="DP30ADPCM is deprecated"></td></tr>
+			<tr><th>Name</th><td id="i_name"></td><td></td><th>Flags</th><td id="i_flags"></td></tr>
+			<tr><th>Sample Pointer</th><td id="i_ptr"></td><td></td><th>Loop</th><td id="i_loop"></td></tr>
+			<tr><th>Sample Length</th><td id="i_len"></td><td></td><th>Stereo</th><td id="i_stereo"></td></tr>
+			<tr><th>Loop Start</th><td id="i_loopa"></td><td></td><th>16-bit LE</th><td id="i_16le"></td></tr>
+			<tr><th>Loop End</th><td id="i_loopb"></td><td></td><th>Sample Rate</th><td id="i_rate"></td></tr>
+			<tr><th>Volume</th><td id="i_vol"></td><td></td><th>Title</th><td id="i_title"></td></tr>
+			<tr><th>Reserved</th><td id="i_pad"></td><td></td><th>Signature</th><td id="i_sig" title='Should be "SCRS"'></td></tr>
+		</table><br>
+		Waveform:<br>
+		<canvas id="waveform" height=64 width=512></canvas>
+		<span id="playptr"></span><br>
+		<audio id="i_play"></audio><br>
+		Rows<span id="rows_extra"></span>:
+		<table id="rows"></table><br>
+		<a class="btm" href="http://www.shikadi.net/moddingwiki/S3M_Format">Documentation this analyzer was based on</a>
+		<script>
+			window.addEventListener("drop", handleDrop);
+			window.addEventListener("dragover", function(e) { e.preventDefault(); });
+			makeChanMapTable();
+			makeRowsTable();
+			$("waveform").addEventListener("click", playSample);
+		</script>
+	</body>
+</html>

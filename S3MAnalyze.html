@@ -188,7 +188,7 @@
 				defaultPan = file.getUint8(0x35);
 				$("h_pan").innerText = defaultPan == 252 ? "Values in header (252)" : defaultPan;
 				special = file.getUint16(0x3E);
-				$("h_extra").innerText = flags & 0x80 ? parapointerString(special) : "Unused (" + toHexWithLen(special, 4) + ')';
+				$("h_extra").innerText = flags & 0x80 ? parapointerString(special) : `Unused (${toHexWithLen(special, 4)})`;
 				setUnused($("h_extra"), flags >> 7, 0);
 
 				for(let i = 0; i < 32; ++i) {
@@ -212,7 +212,7 @@
 				}
 
 				let off = 0x60 + orders.length;
-				console.log("List of " + samples.length + " instrument pointers starting at " + toHexWithLen(off, 4));
+				console.log(`List of ${samples.length} instrument pointers starting at ${toHexWithLen(off, 4)}`);
 				let s = $("samples");
 				while(s.hasChildNodes()) s.removeChild(s.lastChild);
 				for(let i = 0;;) {
@@ -226,7 +226,7 @@
 					else break;
 				}
 
-				console.log("List of " + patterns.length + " pattern pointers starting at " + toHexWithLen(off, 4));
+				console.log(`List of ${patterns.length} pattern pointers starting at ${toHexWithLen(off, 4)}`);
 				let p = $("patterns");
 				while(p.hasChildNodes()) p.removeChild(p.lastChild);
 				for(let i = 0;;) {
@@ -279,7 +279,7 @@
 						info.le16 = (info.flags & 4) != 0;
 						if(info.stereo) info.len *= 2; // stereo
 						if(info.ptr + info.len > file.byteLength) {
-							console.log("Sample data could not fit at its position: " + toHexWithLen(info.ptr, 8) + " with " + info.len + " bytes");
+							console.log(`Sample data could not fit at its position: ${toHexWithLen(info.ptr, 8)} with ${info.len} bytes`);
 						} else {
 							info.data = new DataView(file.buffer, info.ptr, info.len);
 						}
@@ -304,8 +304,8 @@
 				let len = file.getUint16(off, true);
 				patternInfo[idx] = { offset: off, length: len };
 				if(len < 3) {
-					if(len == 2) console.log("Pattern[" + idx + "] at " + toHexWithLen(baseOff, 4) + " was empty");
-					else console.log("Pattern[" + idx + "] at " + toHexWithLen(baseOff, 4) + " didn't even have enough bytes for its own length field");
+					if(len == 2) console.log(`Pattern[${idx}] at ${toHexWithLen(baseOff, 4)} was empty`);
+					else console.log(`Pattern[${idx}] at ${toHexWithLen(baseOff, 4)} didn't even have enough bytes for its own length field`);
 					return null;
 				}
 				off += 2;
@@ -335,7 +335,7 @@
 					}
 				}
 				if(baseOff + len != off) {
-					console.log("Mismatch in data length of pattern[" + idx + "]: Expected " + len + " bytes at " + toHexWithLen(baseOff, 4) + " but read " + (off - baseOff) + '.');
+					console.log(`Mismatch in data length of pattern[${idx}]: Expected ${len} bytes at ${toHexWithLen(baseOff, 4)} but read ${off - baseOff}.`);
 				}
 				return pattern;
 			}
@@ -510,7 +510,7 @@
 				let pattern = patternId >= patterns.length ? null : patterns[patternId];
 				let pInfo = patternId >= patterns.length ? null : patternInfo[patternId];
 				if(pInfo) {
-					$("rows_extra").innerText = "(offset=" + pInfo.offset + ", length=" + pInfo.length + ")";
+					$("rows_extra").innerText = `(offset=${pInfo.offset}, length=${pInfo.length})`;
 				}
 				if(pattern) {
 					for(let i = 0; i < 64; ++i) {
@@ -519,7 +519,7 @@
 						for(let j = 0; j < row.length; ++j) {
 							let info = row[j];
 							if(!info) {
-								console.log("pattern " + patternId + ", row " + i + ", info " + j + " is null");
+								console.log(`pattern ${patternId}, row ${i}, info ${j} is null`);
 								continue;
 							}
 							txt += "Channel " + info.channel + ":<br>";
@@ -529,8 +529,8 @@
 							}
 							if(info.what & 0x40) txt += "&nbsp;- Volume: " + info.vol + "<br>";
 							if(info.what & 0x80) {
-								txt += "&nbsp;- Command: " + getCommandName(info.command, info.param >> 4) + " (" + toHexWithLen(info.command, 2) + ")<br>";
-								txt += "&nbsp;- Parameter: " + toHexWithLen(info.param, 2) + "<br>";
+								txt += `&nbsp;- Command: ${getCommandName(info.command, info.param >> 4)} (${toHexWithLen(info.command, 2)})<br>`;
+								txt += `&nbsp;- Parameter: ${toHexWithLen(info.param, 2)}<br>`;
 							}
 						}
 						if(txt.length > 0) txt = txt.substring(0, txt.length - 4);
@@ -722,27 +722,29 @@
 			#orders span, #samples span, #patterns span {
 				cursor: pointer;
 			}
-			body.dark-theme {
-				background-color: black;
-				color: white;
-			}
-			.dark-theme th {
-				background-color: #666;
-			}
-			.dark-theme a {
-				color: #66C;
-			}
-			.dark-theme .unused {
-				color: #666;
-			}
-			.dark-theme .good {
-				background-color: darkgreen;
-			}
-			.dark-theme .bad {
-				background-color: darkred;
-			}
-			.dark-theme .warn {
-				background-color: darkgoldenrod;
+			@media (prefers-color-scheme: dark) {
+				body {
+					background-color: black;
+					color: white;
+				}
+				th {
+					background-color: #666;
+				}
+				a {
+					color: #66C;
+				}
+				.unused {
+					color: #666;
+				}
+				.good {
+					background-color: darkgreen;
+				}
+				.bad {
+					background-color: darkred;
+				}
+				.warn {
+					background-color: darkgoldenrod;
+				}
 			}
 			.nosamples #waveform, .nosamples #i_play, .nosamples #playptr {
 				display: none;
